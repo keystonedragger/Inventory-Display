@@ -63,7 +63,7 @@ router.post("/products/image", async (req, res) => {
     const response = await openai.images.generate({
       model: "gpt-image-1",
       prompt,
-      size: "512x512",
+      size: "1024x1024",
       n: 1,
     });
 
