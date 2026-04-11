@@ -1,8 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useStore } from "@/context/StoreContext";
 import { useColors } from "@/hooks/useColors";
+import { useProductImage } from "@/hooks/useProductImage";
 
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +30,11 @@ export default function ProductDetailScreen() {
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
 
   const product = products.find((p) => p.id === id);
+  const { imageUri, loading: imageLoading } = useProductImage(
+    product?.id ?? "",
+    product?.name ?? "",
+    product?.category ?? ""
+  );
 
   if (!product) {
     return (
@@ -63,7 +71,22 @@ export default function ProductDetailScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: bottomPadding + 160 }}>
         <View style={[styles.imageBanner, { backgroundColor: colors.secondary }]}>
-          <Feather name="package" size={72} color={colors.mutedForeground} />
+          {imageUri ? (
+            <Image
+              source={{ uri: imageUri }}
+              style={styles.productImage}
+              contentFit="contain"
+            />
+          ) : imageLoading ? (
+            <View style={styles.imageLoadingContainer}>
+              <ActivityIndicator size="large" color={colors.accent} />
+              <Text style={[styles.imageLoadingText, { color: colors.mutedForeground }]}>
+                Generating product image...
+              </Text>
+            </View>
+          ) : (
+            <Feather name="package" size={72} color={colors.mutedForeground} />
+          )}
           {!product.inStock && (
             <View style={[styles.outBadge, { backgroundColor: colors.muted, borderColor: colors.border }]}>
               <Text style={[styles.outBadgeText, { color: colors.mutedForeground }]}>Out of Stock</Text>
@@ -169,10 +192,22 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
   },
   imageBanner: {
-    height: 260,
+    height: 300,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+  },
+  productImage: {
+    width: "100%",
+    height: "100%",
+  },
+  imageLoadingContainer: {
+    alignItems: "center",
+    gap: 12,
+  },
+  imageLoadingText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
   },
   outBadge: {
     position: "absolute",

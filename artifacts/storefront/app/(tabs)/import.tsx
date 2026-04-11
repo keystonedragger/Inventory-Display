@@ -18,7 +18,7 @@ import { useColors } from "@/hooks/useColors";
 export default function ImportScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { importCSV, clearProducts, isImporting, lastImportDate, products } = useStore();
+  const { importCSV, clearProducts, isImporting, isEnriching, enrichProgress, lastImportDate, products } = useStore();
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
@@ -68,7 +68,16 @@ export default function ImportScreen() {
             </Text>
           </TouchableOpacity>
 
-          {lastImportDate && (
+          {isEnriching && (
+            <View style={[styles.statusRow, { backgroundColor: colors.secondary }]}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={[styles.statusText, { color: colors.mutedForeground }]}>
+                Generating descriptions... {enrichProgress}%
+              </Text>
+            </View>
+          )}
+
+          {!isEnriching && lastImportDate && (
             <View style={[styles.statusRow, { backgroundColor: colors.secondary }]}>
               <Feather name="check-circle" size={16} color="#2E7D32" />
               <Text style={[styles.statusText, { color: colors.mutedForeground }]}>

@@ -27,6 +27,8 @@ interface StoreContextType {
   searchQuery: string;
   selectedCategory: string;
   isImporting: boolean;
+  isEnriching: boolean;
+  enrichProgress: number;
   lastImportDate: string | null;
   setSearchQuery: (q: string) => void;
   setSelectedCategory: (c: string) => void;
@@ -108,12 +110,48 @@ function parseCSV(text: string): Product[] {
   return products;
 }
 
+async function enrichDescriptions(products: Product[]): Promise<Record<string, string>> {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  if (!domain) return {};
+
+  try {
+    const response = await fetch(`https://${domain}/api/products/enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        products: products.map((p) => ({
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          category: p.category,
+        })),
+      }),
+    });
+
+    if (!response.ok) return {};
+    const data = await response.json();
+    const map: Record<string, string> = {};
+    if (Array.isArray(data.results)) {
+      for (const item of data.results) {
+        if (item.id && item.description) {
+          map[item.id] = item.description;
+        }
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [isImporting, setIsImporting] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [enrichProgress, setEnrichProgress] = useState(0);
   const [lastImportDate, setLastImportDate] = useState<string | null>(null);
 
   useEffect(() => {
@@ -146,7 +184,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setIsImporting(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: Platform.OS === "web" ? "text/csv" : ["text/csv", "text/comma-separated-values", "text/plain", "public.comma-separated-values-text"],
+        type: Platform.OS === "web"
+          ? "text/csv"
+          : ["text/csv", "text/comma-separated-values", "text/plain", "public.comma-separated-values-text"],
         copyToCacheDirectory: true,
       });
 
@@ -187,12 +227,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setLastImportDate(dateStr);
       await AsyncStorage.setItem(STORAGE_KEYS.LAST_IMPORT, dateStr);
       setSelectedCategory("All");
-
-      Alert.alert("Import Successful", `Imported ${parsed.length} product${parsed.length !== 1 ? "s" : ""} successfully.`);
-    } catch (err) {
-      Alert.alert("Import Failed", "Could not read the CSV file. Please try again.");
-    } finally {
       setIsImporting(false);
+
+      Alert.alert(
+        "Import Successful",
+        `Imported ${parsed.length} product${parsed.length !== 1 ? "s" : ""}. Fetching descriptions in the background...`
+      );
+
+      setIsEnriching(true);
+      setEnrichProgress(0);
+
+      const BATCH = 25;
+      const enriched = [...parsed];
+      let done = 0;
+
+      for (let i = 0; i < parsed.length; i += BATCH) {
+        const batch = parsed.slice(i, i + BATCH);
+        const descMap = await enrichDescriptions(batch);
+        for (const p of enriched) {
+          if (descMap[p.id] && !p.description) {
+            p.description = descMap[p.id];
+          }
+        }
+        done += batch.length;
+        setEnrichProgress(Math.round((done / parsed.length) * 100));
+        setProducts([...enriched]);
+      }
+
+      await AsyncStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(enriched));
+      setIsEnriching(false);
+      setEnrichProgress(100);
+    } catch {
+      Alert.alert("Import Failed", "Could not read the CSV file. Please try again.");
+      setIsImporting(false);
+      setIsEnriching(false);
     }
   }, []);
 
@@ -202,6 +270,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.removeItem(STORAGE_KEYS.LAST_IMPORT);
     setLastImportDate(null);
     setSelectedCategory("All");
+    setEnrichProgress(0);
   }, []);
 
   const addToCart = useCallback((product: Product, qty: number = 1) => {
@@ -259,6 +328,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         searchQuery,
         selectedCategory,
         isImporting,
+        isEnriching,
+        enrichProgress,
         lastImportDate,
         setSearchQuery,
         setSelectedCategory,

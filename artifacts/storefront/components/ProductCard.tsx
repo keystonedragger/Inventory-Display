@@ -1,11 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { Product, useStore } from "@/context/StoreContext";
 import { useColors } from "@/hooks/useColors";
+import { useProductImage } from "@/hooks/useProductImage";
 
 interface Props {
   product: Product;
@@ -31,6 +33,7 @@ export function ProductCard({ product }: Props) {
   const colors = useColors();
   const router = useRouter();
   const { addToCart } = useStore();
+  const { imageUri, loading } = useProductImage(product.id, product.name, product.category);
 
   const handleAddToCart = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -44,7 +47,17 @@ export function ProductCard({ product }: Props) {
       activeOpacity={0.85}
     >
       <View style={[styles.imagePlaceholder, { backgroundColor: colors.secondary }]}>
-        <Feather name="package" size={40} color={colors.mutedForeground} />
+        {imageUri ? (
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.productImage}
+            contentFit="contain"
+          />
+        ) : loading ? (
+          <ActivityIndicator size="small" color={colors.mutedForeground} />
+        ) : (
+          <Feather name="package" size={40} color={colors.mutedForeground} />
+        )}
         {!product.inStock && (
           <View style={[styles.outOfStockBadge, { backgroundColor: colors.muted }]}>
             <Text style={[styles.outOfStockText, { color: colors.mutedForeground }]}>Out of Stock</Text>
@@ -64,7 +77,10 @@ export function ProductCard({ product }: Props) {
           {product.price > 0 ? `$${product.price.toFixed(2)}` : "Price on request"}
         </Text>
         <TouchableOpacity
-          style={[styles.addBtn, { backgroundColor: product.inStock ? colors.addToCart : colors.secondary, opacity: product.inStock ? 1 : 0.5 }]}
+          style={[
+            styles.addBtn,
+            { backgroundColor: product.inStock ? colors.addToCart : colors.secondary, opacity: product.inStock ? 1 : 0.5 },
+          ]}
           onPress={handleAddToCart}
           disabled={!product.inStock}
           activeOpacity={0.7}
@@ -91,6 +107,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+  },
+  productImage: {
+    width: "100%",
+    height: "100%",
   },
   outOfStockBadge: {
     position: "absolute",
