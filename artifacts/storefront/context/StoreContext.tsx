@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Alert, Platform } from "react-native";
 
 export interface Product {
@@ -14,6 +14,7 @@ export interface Product {
   inStock: boolean;
   rating: number;
   reviewCount: number;
+  firstSeenAt: string;
 }
 
 export interface CartItem {
@@ -42,6 +43,7 @@ interface StoreContextType {
   cartCount: number;
   filteredProducts: Product[];
   categories: string[];
+  newProducts: Product[];
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -95,7 +97,7 @@ function parseCSV(text: string): Product[] {
     const inStock = inStockRaw !== "false" && inStockRaw !== "0" && inStockRaw !== "no" && inStockRaw !== "out";
 
     products.push({
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
+      id: sku.toLowerCase(),
       sku,
       name,
       price,
@@ -104,6 +106,7 @@ function parseCSV(text: string): Product[] {
       inStock,
       rating: Math.round((3.5 + Math.random() * 1.5) * 10) / 10,
       reviewCount: Math.floor(Math.random() * 1000) + 5,
+      firstSeenAt: "",
     });
   }
 
@@ -153,6 +156,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [isEnriching, setIsEnriching] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState(0);
   const [lastImportDate, setLastImportDate] = useState<string | null>(null);
+  const productsRef = useRef<Product[]>(products);
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
 
   useEffect(() => {
     const load = async () => {
@@ -203,7 +211,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         text = await response.text();
       } else {
         text = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.UTF8,
+          encoding: "utf8",
         });
       }
 
@@ -223,7 +231,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         minute: "2-digit",
       });
 
-      await saveProducts(parsed);
+      // Merge against whatever's already in the catalog, keyed by stable id (sku).
+      // This lets unchanged items keep their cached description/photo across
+      // re-imports, and lets us distinguish genuinely new items.
+      const currentProducts = productsRef.current;
+      const existingById = new Map(currentProducts.map((p) => [p.id, p]));
+      const importedIds = new Set(parsed.map((p) => p.id));
+      let newCount = 0;
+
+      const merged: Product[] = parsed.map((p) => {
+        const existing = existingById.get(p.id);
+        if (existing) {
+          // Refresh inventory fields while keeping the existing description,
+          // rating, image cache key, and original first-seen date.
+          return {
+            ...existing,
+            name: p.name,
+            price: p.price,
+            category: p.category,
+            inStock: p.inStock,
+          };
+        }
+        newCount += 1;
+        return { ...p, firstSeenAt: dateStr };
+      });
+
+      // Keep removed products for cart/history continuity, but mark them out
+      // of stock instead of silently deleting them.
+      const droppedItems = currentProducts
+        .filter((p) => !importedIds.has(p.id))
+        .map((p) => ({ ...p, inStock: false }));
+
+      const finalProducts = [...merged, ...droppedItems];
+
+      await saveProducts(finalProducts);
       setLastImportDate(dateStr);
       await AsyncStorage.setItem(STORAGE_KEYS.LAST_IMPORT, dateStr);
       setSelectedCategory("All");
@@ -231,32 +272,39 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
       Alert.alert(
         "Import Successful",
-        `Imported ${parsed.length} product${parsed.length !== 1 ? "s" : ""}. Fetching descriptions in the background...`
+        `Imported ${parsed.length} product${parsed.length !== 1 ? "s" : ""} (${newCount} new). Fetching descriptions for new items in the background...`
       );
 
-      setIsEnriching(true);
-      setEnrichProgress(0);
+      // Only enrich items that do not already have a description.
+      const needsEnrichment = finalProducts.filter((p) => !p.description);
 
-      const BATCH = 25;
-      const enriched = [...parsed];
-      let done = 0;
+      if (needsEnrichment.length > 0) {
+        setIsEnriching(true);
+        setEnrichProgress(0);
 
-      for (let i = 0; i < parsed.length; i += BATCH) {
-        const batch = parsed.slice(i, i + BATCH);
-        const descMap = await enrichDescriptions(batch);
-        for (const p of enriched) {
-          if (descMap[p.id] && !p.description) {
-            p.description = descMap[p.id];
+        const BATCH = 25;
+        const byId = new Map(finalProducts.map((p) => [p.id, p]));
+        let done = 0;
+
+        for (let i = 0; i < needsEnrichment.length; i += BATCH) {
+          const batch = needsEnrichment.slice(i, i + BATCH);
+          const descMap = await enrichDescriptions(batch);
+          for (const p of batch) {
+            if (descMap[p.id]) {
+              const target = byId.get(p.id);
+              if (target) target.description = descMap[p.id];
+            }
           }
+          done += batch.length;
+          setEnrichProgress(Math.round((done / needsEnrichment.length) * 100));
+          setProducts(Array.from(byId.values()));
         }
-        done += batch.length;
-        setEnrichProgress(Math.round((done / parsed.length) * 100));
-        setProducts([...enriched]);
-      }
 
-      await AsyncStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(enriched));
-      setIsEnriching(false);
-      setEnrichProgress(100);
+        const finalWithDescriptions = Array.from(byId.values());
+        await AsyncStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(finalWithDescriptions));
+        setIsEnriching(false);
+        setEnrichProgress(100);
+      }
     } catch {
       Alert.alert("Import Failed", "Could not read the CSV file. Please try again.");
       setIsImporting(false);
@@ -319,6 +367,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const cartTotal = cart.reduce((sum, i) => sum + i.product.price * i.quantity, 0);
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+  const newProducts = lastImportDate
+    ? products.filter((p) => p.firstSeenAt === lastImportDate)
+    : [];
 
   return (
     <StoreContext.Provider
@@ -343,6 +394,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         cartCount,
         filteredProducts,
         categories,
+        newProducts,
       }}
     >
       {children}

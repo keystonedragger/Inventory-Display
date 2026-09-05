@@ -23,12 +23,29 @@ function CartBadge() {
   );
 }
 
+function NewItemsBadge() {
+  const { newProducts } = useStore();
+  const colors = useColors();
+  if (newProducts.length === 0) return null;
+  return (
+    <View style={[styles.badge, { backgroundColor: colors.badge }]}>
+      <Text style={[styles.badgeText, { color: colors.badgeForeground }]}>
+        {newProducts.length > 99 ? "99+" : newProducts.length}
+      </Text>
+    </View>
+  );
+}
+
 function NativeTabLayout() {
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
         <Icon sf={{ default: "house", selected: "house.fill" }} />
         <Label>Browse</Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="new">
+        <Icon sf={{ default: "sparkles", selected: "sparkles" }} />
+        <Label>New</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="cart">
         <Icon sf={{ default: "cart", selected: "cart.fill" }} />
@@ -88,6 +105,22 @@ function ClassicTabLayout() {
             ) : (
               <Feather name="home" size={22} color={color} />
             ),
+        }}
+      />
+      <Tabs.Screen
+        name="new"
+        options={{
+          title: "New",
+          tabBarIcon: ({ color }) => (
+            <View>
+              {isIOS ? (
+                <SymbolView name="sparkles" tintColor={color} size={24} />
+              ) : (
+                <Feather name="star" size={22} color={color} />
+              )}
+              <NewItemsBadge />
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
